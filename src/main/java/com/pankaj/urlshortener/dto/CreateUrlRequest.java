@@ -11,8 +11,8 @@ public class CreateUrlRequest {
 
     @NotBlank
     @Pattern(
-            regexp = "^(https?://).+",
-            message = "URL must start with http:// or https://"
+            regexp = "^(https?://)[\\w\\-]+(\\.[\\w\\-]+)+[/#?]?.*$",
+            message = "Invalid URL format"
     )
     private String longUrl;
 }
