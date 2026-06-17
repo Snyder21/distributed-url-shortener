@@ -5,4 +5,5 @@ import com.pankaj.urlshortener.dto.CreateUrlResponse;
 
 public interface UrlService {
     CreateUrlResponse createShortUrl(CreateUrlRequest request);
+    String getLongUrl(String shortCode);
 }
