@@ -6,13 +6,14 @@ import com.pankaj.urlshortener.entity.UrlMapping;
 import com.pankaj.urlshortener.exception.UrlNotFoundException;
 import com.pankaj.urlshortener.repository.UrlRepository;
 import com.pankaj.urlshortener.util.Base62Encoder;
-
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.util.Optional;
 
 @Slf4j
@@ -31,31 +32,36 @@ public class UrlServiceImpl implements UrlService {
     @Transactional
     public CreateUrlResponse createShortUrl(CreateUrlRequest request) {
 
+        validateUrl(request.getLongUrl());
+
         UrlMapping mapping = UrlMapping.builder()
                 .longUrl(request.getLongUrl())
                 .build();
 
-        /*
-         * First save:
-         * MySQL generates ID
-         */
         mapping = urlRepository.save(mapping);
 
-        /*
-         * Generate short code
-         */
         String shortCode = base62Encoder.encode(mapping.getId());
 
         mapping.setShortCode(shortCode);
-        cacheService.put(
+
+        try {
+            cacheService.put(
+                    shortCode,
+                    mapping.getLongUrl()
+            );
+        } catch (Exception ex) {
+            log.error(
+                    "Failed to cache shortCode={}",
+                    shortCode,
+                    ex
+            );
+        }
+
+        log.info(
+                "Created short url. shortCode={}, longUrl={}",
                 shortCode,
                 mapping.getLongUrl()
         );
-        /*
-         * Second save:
-         * Persist short code
-         */
-        urlRepository.save(mapping);
 
         return new CreateUrlResponse(
                 baseUrl + "/" + shortCode
@@ -66,20 +72,34 @@ public class UrlServiceImpl implements UrlService {
     @Transactional(readOnly = true)
     public String getLongUrl(String shortCode) {
 
-        Optional<String> cached =
-                cacheService.get(shortCode);
+        try {
 
-        if (cached.isPresent()) {
+            Optional<String> cached =
+                    cacheService.get(shortCode);
+
+            if (cached.isPresent()) {
+
+                log.info(
+                        "Cache HIT for shortCode={}",
+                        shortCode
+                );
+
+                return cached.get();
+            }
+
             log.info(
-                    "Cache HIT for shortCode={}",
+                    "Cache MISS for shortCode={}",
                     shortCode
             );
-            return cached.get();
+
+        } catch (Exception ex) {
+
+            log.error(
+                    "Redis unavailable for shortCode={}",
+                    shortCode,
+                    ex
+            );
         }
-        log.info(
-                "Cache MISS for shortCode={}",
-                shortCode
-        );
 
         UrlMapping mapping =
                 urlRepository.findByShortCode(shortCode)
@@ -87,11 +107,45 @@ public class UrlServiceImpl implements UrlService {
                                 () -> new UrlNotFoundException(shortCode)
                         );
 
-        cacheService.put(
-                shortCode,
-                mapping.getLongUrl()
-        );
+        try {
+
+            cacheService.put(
+                    shortCode,
+                    mapping.getLongUrl()
+            );
+
+        } catch (Exception ex) {
+
+            log.error(
+                    "Failed to cache shortCode={}",
+                    shortCode,
+                    ex
+            );
+        }
 
         return mapping.getLongUrl();
+    }
+
+    private void validateUrl(String url) {
+
+        try {
+
+            URI uri = new URI(url);
+
+            if (uri.getScheme() == null ||
+                    (!uri.getScheme().equalsIgnoreCase("http")
+                            && !uri.getScheme().equalsIgnoreCase("https"))) {
+
+                throw new IllegalArgumentException(
+                        "URL must start with http:// or https://"
+                );
+            }
+
+        } catch (URISyntaxException ex) {
+
+            throw new IllegalArgumentException(
+                    "Invalid URL format"
+            );
+        }
     }
 }
